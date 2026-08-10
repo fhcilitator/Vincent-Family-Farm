@@ -34,11 +34,18 @@ export const SystemPingRes = z.object({ nonce: z.string(), serverTime: z.number(
 
 /* ------------------------------------------------------------------ claude */
 
+/**
+ * Mirrors the Agent SDK's PermissionMode exactly, verified against the pinned
+ * SDK's type declarations. Kept in sync by a compile-time assertion in the
+ * agent's sdk-contract test — if the SDK adds a mode, that test fails.
+ */
 export const PermissionModeSchema = z.enum([
   'default',
-  'dontAsk',
-  'plan',
+  'acceptEdits',
   'bypassPermissions',
+  'plan',
+  'dontAsk',
+  'auto',
 ]);
 export type PermissionMode = z.infer<typeof PermissionModeSchema>;
 

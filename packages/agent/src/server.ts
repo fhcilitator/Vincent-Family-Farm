@@ -2,10 +2,12 @@ import http from 'node:http';
 import { WebSocketServer } from 'ws';
 import { PROTOCOL_VERSION } from '@vff/protocol';
 import { Hub, WireErr } from './hub.js';
+import { SessionManager, registerChatOps } from './chat/manager.js';
 import type { AgentConfig } from './config.js';
 
 export interface RunningAgent {
   hub: Hub;
+  sessions: SessionManager;
   port: number;
   close(): Promise<void>;
 }
@@ -24,7 +26,9 @@ export async function start(cfg: AgentConfig): Promise<RunningAgent> {
   }
 
   const hub = new Hub();
+  const sessions = new SessionManager(cfg, hub);
   registerSystemOps(hub, cfg);
+  registerChatOps(hub, sessions);
 
   const server = http.createServer((req, res) => {
     if (req.url === '/health') {
@@ -64,9 +68,11 @@ export async function start(cfg: AgentConfig): Promise<RunningAgent> {
 
   return {
     hub,
+    sessions,
     port,
     async close() {
       stopHeartbeat();
+      sessions.closeAll();
       await new Promise<void>((resolve) => wss.close(() => resolve()));
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
@@ -94,7 +100,7 @@ function registerSystemOps(hub: Hub, cfg: AgentConfig): void {
       capabilities: {
         // Flipped on as each phase lands, so the app greys out dead UI rather
         // than erroring on it.
-        claude: false,
+        claude: true,
         pty: false,
         git: false,
         files: false,
