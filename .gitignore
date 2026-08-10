@@ -1,0 +1,20 @@
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# Expo
+.expo/
+apps/mobile/android/
+apps/mobile/ios/
+
+# Agent runtime state — never commit; contains device keys and session logs
+packages/agent/.data/
+*.log
+
+# Env
+.env
+.env.local
+
+# OS
+.DS_Store

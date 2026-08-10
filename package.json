@@ -1,0 +1,25 @@
+{
+  "name": "vff-mobile-coding",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Android companion app and dev-box agent for driving Claude Code from a phone",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run build --workspace=@vff/protocol && npm run build --workspace=@vff/agent",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "agent": "npm run start --workspace=@vff/agent",
+    "harness": "npm run harness --workspace=@vff/agent"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
