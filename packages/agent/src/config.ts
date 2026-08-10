@@ -78,8 +78,21 @@ export function policyFor(cfg: AgentConfig, tier: TrustTier): TierPolicy {
   if (tier === 'public') {
     return {
       allowSessionScopedApprovals: false,
-      // Only modes that keep every tool call gated behind a prompt.
-      allowedPermissionModes: ['default', 'plan'],
+      /**
+       * `auto` is permitted here even though it reduces prompting.
+       *
+       * Refusing it bought no security: anyone holding the token can already
+       * tap Allow on every prompt, so the restriction removed no capability
+       * from an attacker — only convenience from the operator. What it does
+       * change is unattended behaviour, since an autonomous run over the
+       * tunnel proceeds without the short timeout below catching it. That is
+       * a real trade, and it belongs to whoever runs the agent.
+       *
+       * `acceptEdits` and `dontAsk` stay out because they silently widen file
+       * writes, and `bypassPermissions` because a remote kill switch for the
+       * only safety mechanism does not belong on a device left in bars.
+       */
+      allowedPermissionModes: ['default', 'plan', 'auto'],
       permissionTimeoutMs: cfg.publicPermissionTimeoutMs,
     };
   }

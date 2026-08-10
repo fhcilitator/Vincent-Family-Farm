@@ -12,6 +12,8 @@
   },
   "scripts": {
     "build": "npm run build --workspace=@vff/protocol && npm run build --workspace=@vff/client-core && npm run build --workspace=@vff/agent",
+    "build:client": "npm run build --workspace=@vff/protocol && npm run build --workspace=@vff/client-core",
+    "eas-build-post-install": "npm run build:client",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "agent": "npm run start --workspace=@vff/agent",

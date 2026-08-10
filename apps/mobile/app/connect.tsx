@@ -89,8 +89,9 @@ export default function ConnectScreen() {
         placeholder="wss://agent.example.com"
       />
       <Text style={s.help}>
-        The fallback. Every tool call is approved individually and prompts expire after two minutes,
-        because a prompt you are not there to answer should fail closed sooner.
+        The fallback. An approval cannot be remembered for the rest of the session here, and prompts
+        expire after two minutes — a prompt you are not there to answer should fail closed sooner.
+        Auto mode is available if you would rather it run without asking.
       </Text>
 
       <Field label="Agent token" value={token} onChange={setToken} placeholder="from vibe-agent init" secure />

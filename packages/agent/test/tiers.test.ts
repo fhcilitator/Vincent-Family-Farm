@@ -102,11 +102,11 @@ describe('the agent tells the app what is restricted', () => {
     c.close();
   });
 
-  test('public policy forbids them and lists only prompting modes', async () => {
+  test('public policy forbids session grants and the edit-widening modes', async () => {
     const c = new AgentClient(publicUrl, TOKEN);
     const hello = await c.connect();
     assert.equal(hello.policy.allowSessionScopedApprovals, false);
-    assert.deepEqual(hello.policy.allowedPermissionModes.sort(), ['default', 'plan']);
+    assert.deepEqual(hello.policy.allowedPermissionModes.sort(), ['auto', 'default', 'plan']);
     // Shorter, so a prompt nobody is there to answer fails closed sooner.
     assert.ok(hello.policy.permissionTimeoutMs < 30 * 60 * 1000);
     c.close();
@@ -114,7 +114,23 @@ describe('the agent tells the app what is restricted', () => {
 });
 
 describe('permissionMode gating', () => {
-  const restricted = ['acceptEdits', 'dontAsk', 'auto', 'bypassPermissions'] as const;
+  const restricted = ['acceptEdits', 'dontAsk', 'bypassPermissions'] as const;
+
+  /**
+   * Asserted positively, not merely left out of the list above.
+   *
+   * `auto` is allowed on the public path on purpose — refusing it removed no
+   * capability from anyone holding the token, only convenience from the
+   * operator. Without a test that says so, a later tightening of this policy
+   * would take it away again and every other test here would still pass.
+   */
+  test('public accepts permissionMode "auto"', async () => {
+    const c = new AgentClient(publicUrl, TOKEN);
+    await c.connect();
+    const res = await c.request('claude/start', { permissionMode: 'auto' });
+    assert.ok(res.sessionId, 'a public connection must be able to start an auto-mode session');
+    c.close();
+  });
 
   for (const mode of restricted) {
     test(`public rejects permissionMode "${mode}"`, async () => {

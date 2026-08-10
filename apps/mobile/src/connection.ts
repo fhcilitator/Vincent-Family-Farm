@@ -8,7 +8,7 @@ import {
   type ChatState,
   type ConnectionState,
 } from '@vff/client-core';
-import type { ops } from '@vff/protocol';
+import type { ops, PermissionMode } from '@vff/protocol';
 import type { z } from 'zod';
 import { rnSocket } from './socket';
 import { loadAgent, preferredEndpoints, type AgentConfig } from './agent-store';
@@ -27,7 +27,7 @@ interface ConnectionSlice {
   restore: () => Promise<boolean>;
   connect: (config: AgentConfig, token: string) => void;
   disconnect: () => void;
-  startSession: () => Promise<void>;
+  startSession: (permissionMode?: PermissionMode) => Promise<void>;
   send: (text: string) => Promise<void>;
   respond: (requestId: string, allow: boolean) => Promise<void>;
   interrupt: () => Promise<void>;
@@ -84,10 +84,16 @@ export const useConnection = create<ConnectionSlice>((set, get) => ({
     set({ state: 'disconnected', hello: null, sessionId: null, chat: initialChatState });
   },
 
-  async startSession() {
+  async startSession(permissionMode) {
     if (!client) return;
     try {
-      const res = await client.request('claude/start', {});
+      // Omitted rather than defaulted here: the agent resolves an absent mode
+      // to `default` itself, and sending one it will refuse turns a mode
+      // choice into a failed session start.
+      const res = await client.request(
+        'claude/start',
+        permissionMode ? { permissionMode } : {},
+      );
       client.track(res.sessionId, 0);
       set({ sessionId: res.sessionId, chat: initialChatState, error: null });
     } catch (e) {

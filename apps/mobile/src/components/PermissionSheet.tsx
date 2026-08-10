@@ -1,7 +1,33 @@
+import { useEffect, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { PendingPermission } from '@vff/client-core';
 import { C, TAP_MIN } from '../theme';
+
+/**
+ * Time left before the agent denies this ask on its own.
+ *
+ * Worth the ticker: on the public tier the window is two minutes, and the
+ * agent resolves a lapsed ask by denying it — correct, but from the phone an
+ * unexplained disappearance is indistinguishable from the app breaking. The
+ * countdown makes a timeout legible as a timeout.
+ */
+function useCountdown(expiresAt: number | null): string | null {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (expiresAt === null) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [expiresAt]);
+
+  if (expiresAt === null) return null;
+  const left = Math.max(0, Math.ceil((expiresAt - now) / 1000));
+  if (left === 0) return 'expired';
+  const m = Math.floor(left / 60);
+  const sec = left % 60;
+  return m > 0 ? `${m}:${String(sec).padStart(2, '0')} left` : `${sec}s left`;
+}
 
 /**
  * The approval sheet.
@@ -25,6 +51,9 @@ export function PermissionSheet({
   onDecide: (requestId: string, allow: boolean) => void;
 }) {
   const insets = useSafeAreaInsets();
+  // Called before the early return: hooks must run on every render, and `ask`
+  // is null whenever nothing is pending.
+  const countdown = useCountdown(ask?.expiresAt ?? null);
   if (!ask) return null;
 
   const risky = ask.render.risk === 'high';
@@ -39,7 +68,14 @@ export function PermissionSheet({
               {ask.render.risk} risk
             </Text>
           </View>
-          <Text style={s.subtitle}>{ask.render.subtitle}</Text>
+          <View style={s.meta}>
+            <Text style={s.subtitle}>{ask.render.subtitle}</Text>
+            {countdown && (
+              <Text style={[s.countdown, countdown === 'expired' && s.countdownDone]}>
+                {countdown}
+              </Text>
+            )}
+          </View>
 
           <ScrollView style={s.bodyBox} contentContainerStyle={{ padding: 12 }}>
             <Text selectable style={s.body}>
@@ -82,7 +118,10 @@ const s = StyleSheet.create({
   head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   title: { color: C.text, fontSize: 18, fontWeight: '700', flexShrink: 1 },
   risk: { fontSize: 13, fontWeight: '600', textTransform: 'uppercase' },
-  subtitle: { color: C.dim, fontSize: 13 },
+  meta: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  subtitle: { color: C.dim, fontSize: 13, flexShrink: 1 },
+  countdown: { color: C.warn, fontSize: 13, fontVariant: ['tabular-nums'] },
+  countdownDone: { color: C.danger },
   bodyBox: {
     backgroundColor: C.bg,
     borderRadius: 10,

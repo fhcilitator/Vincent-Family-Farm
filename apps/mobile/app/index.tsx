@@ -11,6 +11,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import type { ChatItem } from '@vff/client-core';
+import type { PermissionMode } from '@vff/protocol';
 import { useConnection } from '../src/connection';
 import { PermissionSheet } from '../src/components/PermissionSheet';
 import { useVoice, onDevice } from '../src/voice';
@@ -20,6 +21,7 @@ export default function ChatScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const [draft, setDraft] = useState('');
+  const [mode, setMode] = useState<PermissionMode>('default');
   const listRef = useRef<FlatList<ChatItem>>(null);
   // The recognizer's callbacks fire outside React's update cycle, so it reads
   // the draft through a ref rather than capturing a stale one.
@@ -100,15 +102,22 @@ export default function ChatScreen() {
       <KeyboardAvoidingView behavior="padding">
         <View style={[s.composer, { paddingBottom: insets.bottom + 8 }]}>
           {!sessionId ? (
-            <Pressable
-              style={[s.primary, state !== 'live' && s.disabled]}
-              disabled={state !== 'live'}
-              onPress={() => void startSession()}
-            >
-              <Text style={s.primaryText}>
-                {state === 'live' ? 'Start a session' : `Connecting… (${state})`}
-              </Text>
-            </Pressable>
+            <>
+              <ModePicker
+                allowed={hello?.policy.allowedPermissionModes ?? []}
+                selected={mode}
+                onSelect={setMode}
+              />
+              <Pressable
+                style={[s.primary, state !== 'live' && s.disabled]}
+                disabled={state !== 'live'}
+                onPress={() => void startSession(mode)}
+              >
+                <Text style={s.primaryText}>
+                  {state === 'live' ? 'Start a session' : `Connecting… (${state})`}
+                </Text>
+              </Pressable>
+            </>
           ) : (
             <View style={s.composerRow}>
               <Pressable
@@ -197,6 +206,55 @@ function Header({
         actually stops a run.
       */}
       {rateLimit && <Badge text={rateLimit} color={C.surfaceAlt} />}
+    </View>
+  );
+}
+
+const MODE_BLURB: Record<string, string> = {
+  default: 'Approve each tool call',
+  plan: 'Plan only, no changes',
+  auto: 'Runs without prompting',
+  acceptEdits: 'File edits auto-approved',
+  dontAsk: 'No prompts at all',
+  bypassPermissions: 'All gates off',
+};
+
+/**
+ * Permission mode chips, built from what the agent said it allows.
+ *
+ * Driven off `hello.policy.allowedPermissionModes` rather than a list in the
+ * app, for two reasons: the picker can never offer a mode the agent will
+ * refuse — which would turn a mode choice into a failed session start — and
+ * the set legitimately differs by tier, so a hardcoded list would be wrong on
+ * one path or the other no matter which list was chosen.
+ */
+function ModePicker({
+  allowed,
+  selected,
+  onSelect,
+}: {
+  allowed: readonly PermissionMode[];
+  selected: PermissionMode;
+  onSelect: (m: PermissionMode) => void;
+}) {
+  if (allowed.length <= 1) return null;
+  return (
+    <View style={s.modes}>
+      {allowed.map((m) => {
+        const active = m === selected;
+        return (
+          <Pressable
+            key={m}
+            accessibilityRole="button"
+            accessibilityState={{ selected: active }}
+            style={[s.mode, active && s.modeActive]}
+            onPress={() => onSelect(m)}
+          >
+            <Text style={[s.modeName, active && s.modeNameActive]}>{m}</Text>
+            {MODE_BLURB[m] && <Text style={s.modeBlurb}>{MODE_BLURB[m]}</Text>}
+          </Pressable>
+        );
+      })}
     </View>
   );
 }
@@ -326,6 +384,21 @@ const s = StyleSheet.create({
   partial: { color: C.dim, fontStyle: 'italic', fontSize: 14 },
   voiceError: { color: C.warn, fontSize: 13 },
   sendText: { color: '#fff', fontWeight: '700' },
+  modes: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  mode: {
+    minHeight: TAP_MIN,
+    justifyContent: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: C.border,
+    backgroundColor: C.surface,
+  },
+  modeActive: { borderColor: C.accent, backgroundColor: C.surfaceAlt },
+  modeName: { color: C.dim, fontWeight: '700', fontSize: 14 },
+  modeNameActive: { color: C.accent },
+  modeBlurb: { color: C.dim, fontSize: 11 },
   primary: { minHeight: TAP_MIN + 6, borderRadius: 12, backgroundColor: C.accent, alignItems: 'center', justifyContent: 'center' },
   primaryText: { color: '#fff', fontWeight: '700', fontSize: 16 },
   disabled: { backgroundColor: C.surfaceAlt },

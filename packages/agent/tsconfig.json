@@ -4,9 +4,18 @@
     "outDir": "./dist",
     "rootDir": "./src",
     "paths": {
-      "@vff/protocol": ["../protocol/src/index.ts"]
-    }
+      "@vff/protocol": [
+        "../protocol/src/index.ts"
+      ]
+    },
+    "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo"
   },
-  "include": ["src/**/*"],
-  "references": [{ "path": "../protocol" }]
+  "include": [
+    "src/**/*"
+  ],
+  "references": [
+    {
+      "path": "../protocol"
+    }
+  ]
 }
