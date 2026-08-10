@@ -12,7 +12,17 @@
       "package": "com.vincentfamilyfarm.vibeagent",
       "edgeToEdgeEnabled": true
     },
-    "plugins": ["expo-router", "expo-secure-store"],
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "@jamsch/expo-speech-recognition",
+        {
+          "microphonePermission": "Dictate prompts instead of typing them on a phone keyboard.",
+          "speechRecognitionPermission": "Turn what you say into a prompt you can read and edit before sending."
+        }
+      ]
+    ],
     "experiments": {
       "typedRoutes": true
     }

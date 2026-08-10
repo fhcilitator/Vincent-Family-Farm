@@ -38,6 +38,29 @@ which is what Play requires for new apps and updates from 31 Aug 2026. It also
 enforces edge-to-edge with no opt-out, so every screen pads itself with
 `useSafeAreaInsets` rather than assuming the system bars reserve space.
 
+## Voice
+
+Hold the mic button to dictate; release to stop. The transcript goes into the
+composer, never straight to Claude — a misheard instruction reaching a tool
+that runs bash is the failure this prevents, and it costs one tap. Nothing in
+the voice path can approve a permission.
+
+`@jamsch/expo-speech-recognition` declares `RECORD_AUDIO` via its config
+plugin, so it is not repeated in `app.json`. Continuous mode is detected at
+runtime (Android 13+); below that the recognizer stops at the first pause and
+plays a beep it hardcodes.
+
+On-device recognition is preferred and reported in the UI, but it is a
+preference, not a guarantee: without the language pack installed Android's
+default recognizer sends audio to Google. **The Data Safety form must say
+that** rather than claiming audio never leaves the phone.
+
+Corrections live in `packages/client-core/src/dictation.ts` — a find/replace
+pass that turns "use effect" into `useEffect` and "see d" into `cd`. It is
+there rather than here because it is pure and gets real tests; recognition
+accuracy itself can only be judged on a device, and doing that is how the list
+should grow.
+
 ## Connecting
 
 `app/connect.tsx` takes both endpoints and the agent token. The token is the

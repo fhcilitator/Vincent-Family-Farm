@@ -21,3 +21,9 @@ export {
   type PendingPermission,
   type RateLimit,
 } from './chat-reducer.js';
+export {
+  applyDictation,
+  appendDictation,
+  DEFAULT_DICTATION_RULES,
+  type DictationRule,
+} from './dictation.js';

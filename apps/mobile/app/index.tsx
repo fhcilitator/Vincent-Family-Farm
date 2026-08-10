@@ -13,6 +13,7 @@ import { useRouter } from 'expo-router';
 import type { ChatItem } from '@vff/client-core';
 import { useConnection } from '../src/connection';
 import { PermissionSheet } from '../src/components/PermissionSheet';
+import { useVoice, onDevice } from '../src/voice';
 import { C, TAP_MIN } from '../src/theme';
 
 export default function ChatScreen() {
@@ -20,6 +21,14 @@ export default function ChatScreen() {
   const router = useRouter();
   const [draft, setDraft] = useState('');
   const listRef = useRef<FlatList<ChatItem>>(null);
+  // The recognizer's callbacks fire outside React's update cycle, so it reads
+  // the draft through a ref rather than capturing a stale one.
+  const draftRef = useRef('');
+  draftRef.current = draft;
+
+  // Dictation only ever fills the composer. It cannot send, and it cannot
+  // reach the permission sheet.
+  const voice = useVoice(setDraft, () => draftRef.current);
 
   const {
     config,
@@ -102,6 +111,17 @@ export default function ChatScreen() {
             </Pressable>
           ) : (
             <View style={s.composerRow}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={voice.listening ? 'Stop dictating' : 'Dictate a prompt'}
+                style={[s.mic, voice.listening && s.micLive]}
+                // Push to talk: no wake word, no ambient recording, and the
+                // mic is only ever live while a finger is on it.
+                onPressIn={() => void voice.start()}
+                onPressOut={voice.stop}
+              >
+                <Text style={s.micText}>{voice.listening ? '●' : '🎙'}</Text>
+              </Pressable>
               <TextInput
                 style={s.input}
                 value={draft}
@@ -121,6 +141,18 @@ export default function ChatScreen() {
               </Pressable>
             </View>
           )}
+          {/*
+            The live transcript is shown separately from the composer so it is
+            obvious that nothing has been committed yet — and it is never sent
+            on its own. Final text lands in the box above, editable.
+          */}
+          {voice.listening && (
+            <Text style={s.partial}>
+              {voice.partial || (onDevice ? 'Listening (on device)…' : 'Listening…')}
+            </Text>
+          )}
+          {voice.error && <Text style={s.voiceError}>{voice.error}</Text>}
+
           {chat.thinking && (
             <Pressable style={s.stop} onPress={() => void interrupt()}>
               <Text style={s.stopText}>Working… tap to stop</Text>
@@ -279,6 +311,20 @@ const s = StyleSheet.create({
     fontSize: 15,
   },
   send: { minHeight: TAP_MIN, minWidth: 72, borderRadius: 12, backgroundColor: C.accent, alignItems: 'center', justifyContent: 'center' },
+  mic: {
+    minHeight: TAP_MIN,
+    minWidth: TAP_MIN,
+    borderRadius: 12,
+    backgroundColor: C.surface,
+    borderWidth: 1,
+    borderColor: C.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  micLive: { backgroundColor: C.danger, borderColor: C.danger },
+  micText: { fontSize: 20, color: C.text },
+  partial: { color: C.dim, fontStyle: 'italic', fontSize: 14 },
+  voiceError: { color: C.warn, fontSize: 13 },
   sendText: { color: '#fff', fontWeight: '700' },
   primary: { minHeight: TAP_MIN + 6, borderRadius: 12, backgroundColor: C.accent, alignItems: 'center', justifyContent: 'center' },
   primaryText: { color: '#fff', fontWeight: '700', fontSize: 16 },

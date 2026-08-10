@@ -10,6 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@jamsch/expo-speech-recognition": "^0.2.15",
     "@vff/client-core": "*",
     "@vff/protocol": "*",
     "expo": "~56.0.19",
