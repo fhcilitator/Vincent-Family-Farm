@@ -16,6 +16,8 @@ export class SessionManager {
   constructor(
     private readonly cfg: AgentConfig,
     private readonly hub: Hub,
+    /** Overridden in tests so the reconnect path runs without API credentials. */
+    private readonly queryFn?: ChatSessionOptions['queryFn'],
   ) {}
 
   get size(): number {
@@ -68,6 +70,7 @@ export class SessionManager {
       resume: input.resume,
       forkSession: input.forkSession,
       permissionTimeoutMs: this.cfg.permissionTimeoutMs,
+      queryFn: this.queryFn,
       onEvent: (session, seq, type, body) => {
         this.hub.broadcast({
           kind: 'event',
@@ -122,7 +125,7 @@ export class SessionManager {
 
 /** Register the claude/* ops against the hub. */
 export function registerChatOps(hub: Hub, manager: SessionManager): void {
-  hub.register('claude/start', ({ body }) => {
+  hub.register('claude/start', ({ body, conn }) => {
     const input = body as {
       cwd?: string;
       model?: string;
@@ -131,6 +134,9 @@ export function registerChatOps(hub: Hub, manager: SessionManager): void {
       forkSession?: boolean;
     };
     const session = manager.create(input);
+    // Starting a session implies watching it. Without this the creator gets
+    // no events until it separately attaches, which reads as a dead session.
+    conn.subscriptions.add(session.id);
     return { sessionId: session.id, resumed: Boolean(input.resume) };
   });
 
