@@ -1,0 +1,26 @@
+{
+  "name": "@vff/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "vibe-agent": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test test/*.test.ts",
+    "start": "tsx src/cli.ts start",
+    "harness": "tsx src/client/repl.ts"
+  },
+  "dependencies": {
+    "@vff/protocol": "*",
+    "nanoid": "^5.0.9",
+    "ws": "^8.18.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.13"
+  }
+}
