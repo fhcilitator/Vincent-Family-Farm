@@ -1,6 +1,6 @@
 import { nanoid } from 'nanoid';
 import { query, type Query, type SDKUserMessage } from '@anthropic-ai/claude-agent-sdk';
-import { events } from '@vff/protocol';
+import { events, type TrustTier } from '@vff/protocol';
 import { ChannelLog } from '../channel-log.js';
 import { translate } from './translate.js';
 import {
@@ -55,6 +55,15 @@ export interface ChatSessionOptions {
   onEvent: (session: ChatSession, seq: number, type: string, body: unknown) => void;
   /** Defaults to the real SDK. Overridden in tests. */
   queryFn?: QueryFn | undefined;
+  /**
+   * Highest-trust tier currently attached, or 'none' when nobody is watching.
+   * Resolved per-ask rather than fixed at session creation, because a session
+   * outlives its connections and can be attached from either tier over its
+   * lifetime.
+   */
+  resolveTier: () => TrustTier | 'none';
+  /** Shorter ceiling used while only public clients are attached. */
+  publicPermissionTimeoutMs: number;
 }
 
 /**
@@ -83,6 +92,11 @@ export class ChatSession {
   #running = false;
   #pending = new Map<string, PendingPermission>();
   #sessionAllows = new Set<string>();
+  /**
+   * Tier of whoever answered the ask currently being resolved. Defaults to
+   * the restrictive tier so a missing value can never widen privileges.
+   */
+  #responderTier: TrustTier = 'public';
   #abort = new AbortController();
 
   constructor(private readonly opts: ChatSessionOptions) {
@@ -202,16 +216,20 @@ export class ChatSession {
    */
   #canUseTool: CanUseTool = async (toolName, input, options) => {
     const call = normalizePermissionCall(toolName, input, options);
+    const tier = this.opts.resolveTier();
 
-    // Previously granted "allow for this session" — don't nag.
+    // A stored "allow for this session" only suppresses the prompt while a
+    // trusted client is actually attached. Convenience requires presence on
+    // the trusted path: approve `npm test` at home and it stops nagging; walk
+    // out of the house and the same call asks again.
     const ruleKey = this.#ruleKey(toolName, input);
-    if (this.#sessionAllows.has(ruleKey)) {
+    if (tier === 'trusted' && this.#sessionAllows.has(ruleKey)) {
       return toSdkResult({ allow: true, scope: 'session' });
     }
 
     const requestId = nanoid();
-    const expiresAt =
-      this.opts.permissionTimeoutMs > 0 ? Date.now() + this.opts.permissionTimeoutMs : null;
+    const timeoutMs = this.#timeoutFor(tier);
+    const expiresAt = timeoutMs > 0 ? Date.now() + timeoutMs : null;
 
     this.#emit(E.permissionPending, {
       requestId,
@@ -234,9 +252,7 @@ export class ChatSession {
         // process must stay alive to honour the timeout, or a session could
         // be left permanently blocked on an ask that can never resolve.
         const timer =
-          this.opts.permissionTimeoutMs > 0
-            ? setTimeout(() => reject(new PermissionTimeout()), this.opts.permissionTimeoutMs)
-            : null;
+          timeoutMs > 0 ? setTimeout(() => reject(new PermissionTimeout()), timeoutMs) : null;
 
         const onAbort = () => reject(new PermissionAborted());
         call.signal.addEventListener('abort', onAbort, { once: true });
@@ -252,7 +268,13 @@ export class ChatSession {
         });
       });
 
-      if (decision.allow && decision.scope !== 'once') this.#sessionAllows.add(ruleKey);
+      // A session-scoped grant is only ever CREATED from a trusted responder.
+      // A public client can allow a call, but cannot buy itself silence for
+      // the next one — that would let a stolen token escalate one approval
+      // into open-ended execution.
+      if (decision.allow && decision.scope !== 'once' && this.#responderTier === 'trusted') {
+        this.#sessionAllows.add(ruleKey);
+      }
 
       this.#emit(E.permissionResolved, {
         requestId,
@@ -281,10 +303,21 @@ export class ChatSession {
     }
   };
 
-  /** Answer a pending ask. False when it already resolved. */
-  respondToPermission(requestId: string, decision: PermissionDecision): boolean {
+  /**
+   * Answer a pending ask. False when it already resolved — timed out, or
+   * another attached device won the race.
+   *
+   * `responderTier` is the tier of the connection that answered, and gates
+   * whether a session-scoped grant may be created.
+   */
+  respondToPermission(
+    requestId: string,
+    decision: PermissionDecision,
+    responderTier: TrustTier = 'public',
+  ): boolean {
     const pending = this.#pending.get(requestId);
     if (!pending) return false;
+    this.#responderTier = responderTier;
     pending.resolve(decision);
     return true;
   }
@@ -326,6 +359,19 @@ export class ChatSession {
    * identifying argument, so approving `Bash(npm test)` does not silently
    * approve `Bash(rm -rf /)`.
    */
+  /**
+   * With nobody attached we use the longer trusted timeout: we cannot know
+   * which path the user will return on, and a pending ask is fail-closed
+   * anyway (nothing executes while it waits), so denying early only loses
+   * work. The shorter public ceiling is hygiene for prompts left hanging on
+   * an untrusted path, not a containment control.
+   */
+  #timeoutFor(tier: TrustTier | 'none'): number {
+    return tier === 'public'
+      ? this.opts.publicPermissionTimeoutMs
+      : this.opts.permissionTimeoutMs;
+  }
+
   #ruleKey(toolName: string, input: Record<string, unknown>): string {
     if (typeof input.command === 'string') return `${toolName}:${input.command}`;
     if (typeof input.file_path === 'string') return `${toolName}:${input.file_path}`;

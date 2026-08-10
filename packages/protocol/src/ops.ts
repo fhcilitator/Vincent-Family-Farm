@@ -7,6 +7,27 @@ import { z } from 'zod';
  * of a successful `res`. Event bodies live in `events.ts`.
  */
 
+/* ------------------------------------------------------------------ shared */
+
+/**
+ * Mirrors the Agent SDK's PermissionMode exactly, verified against the pinned
+ * SDK's type declarations. Kept in sync by a compile-time assertion in the
+ * agent's sdk-contract test — if the SDK adds a mode, that test fails.
+ *
+ * Declared here rather than in the claude section because the system/hello
+ * policy references it, and a const referenced before its declaration is a
+ * temporal-dead-zone crash at import time.
+ */
+export const PermissionModeSchema = z.enum([
+  'default',
+  'acceptEdits',
+  'bypassPermissions',
+  'plan',
+  'dontAsk',
+  'auto',
+]);
+export type PermissionMode = z.infer<typeof PermissionModeSchema>;
+
 /* ------------------------------------------------------------------ system */
 
 export const SystemHelloReq = z.object({
@@ -16,10 +37,35 @@ export const SystemHelloReq = z.object({
   clientVersion: z.string().min(1),
 });
 
+/**
+ * Which listener accepted this connection. `trusted` is the tailnet-private
+ * path; `public` is reachable from the internet and is deliberately more
+ * restricted. Determined by the accepting socket, never by a client-supplied
+ * header — see the agent's server.ts.
+ */
+export const TrustTierSchema = z.enum(['trusted', 'public']);
+export type TrustTier = z.infer<typeof TrustTierSchema>;
+
+/**
+ * The restrictions actually in force on this connection. Sent by the agent so
+ * the app displays the truth rather than inferring it from which URL it
+ * dialled — the behaviour difference is visible to the user (more prompts,
+ * shorter timeouts) and a silent change reads as a bug.
+ */
+export const EffectivePolicySchema = z.object({
+  /** False on public: every tool call must be approved individually. */
+  allowSessionScopedApprovals: z.boolean(),
+  /** Permission modes this connection may select. */
+  allowedPermissionModes: z.array(PermissionModeSchema),
+  permissionTimeoutMs: z.number().int().nonnegative(),
+});
+
 export const SystemHelloRes = z.object({
   protocolVersion: z.number().int().positive(),
   agentVersion: z.string(),
   workspaceRoot: z.string(),
+  tier: TrustTierSchema,
+  policy: EffectivePolicySchema,
   /** Capabilities the agent actually has, so the app can hide dead UI. */
   capabilities: z.object({
     claude: z.boolean(),
@@ -33,21 +79,6 @@ export const SystemPingReq = z.object({ nonce: z.string() });
 export const SystemPingRes = z.object({ nonce: z.string(), serverTime: z.number() });
 
 /* ------------------------------------------------------------------ claude */
-
-/**
- * Mirrors the Agent SDK's PermissionMode exactly, verified against the pinned
- * SDK's type declarations. Kept in sync by a compile-time assertion in the
- * agent's sdk-contract test — if the SDK adds a mode, that test fails.
- */
-export const PermissionModeSchema = z.enum([
-  'default',
-  'acceptEdits',
-  'bypassPermissions',
-  'plan',
-  'dontAsk',
-  'auto',
-]);
-export type PermissionMode = z.infer<typeof PermissionModeSchema>;
 
 export const EffortSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max']);
 

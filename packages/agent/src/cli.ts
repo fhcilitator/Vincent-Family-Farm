@@ -21,9 +21,18 @@ async function runStart(): Promise<void> {
   const cfg = loadConfig();
   const agent = await start(cfg);
 
-  console.log(`vibe-agent listening on ws://${cfg.host}:${agent.port}`);
+  if (agent.ports.trusted) {
+    console.log(`vibe-agent [trusted] ws://${cfg.host}:${agent.ports.trusted}`);
+    console.log(`    expose with: tailscale serve --bg ${agent.ports.trusted}`);
+  }
+  if (agent.ports.public) {
+    console.log(`vibe-agent [public]  ws://${cfg.host}:${agent.ports.public}`);
+    console.log(`    expose with: tailscale funnel --bg ${agent.ports.public}`);
+    console.log(`            or:  cloudflared tunnel --url http://${cfg.host}:${agent.ports.public}`);
+  }
   console.log(`  roots: ${cfg.roots.join(', ')}`);
-  console.log(`  permission timeout: ${cfg.permissionTimeoutMs}ms`);
+  console.log(`  permission timeout: ${cfg.permissionTimeoutMs}ms trusted / ` +
+    `${cfg.publicPermissionTimeoutMs}ms public`);
 
   const shutdown = async (signal: string) => {
     console.log(`\n${signal} — shutting down`);

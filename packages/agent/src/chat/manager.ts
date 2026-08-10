@@ -2,8 +2,8 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { ChatSession, type ChatSessionOptions } from './session.js';
 import { WireErr, type Hub } from '../hub.js';
-import type { AgentConfig } from '../config.js';
-import type { PermissionMode } from './sdk-adapter.js';
+import { policyFor, type AgentConfig } from '../config.js';
+import type { TrustTier, PermissionMode } from '@vff/protocol';
 
 /**
  * Owns every live Claude session. Sessions are keyed by our own id and
@@ -46,20 +46,30 @@ export class SessionManager {
     return s;
   }
 
-  create(input: {
-    cwd?: string | undefined;
-    model?: string | undefined;
-    permissionMode?: PermissionMode | undefined;
-    resume?: string | undefined;
-    forkSession?: boolean | undefined;
-  }): ChatSession {
+  create(
+    input: {
+      cwd?: string | undefined;
+      model?: string | undefined;
+      permissionMode?: PermissionMode | undefined;
+      resume?: string | undefined;
+      forkSession?: boolean | undefined;
+    },
+    tier: TrustTier,
+  ): ChatSession {
     const cwd = this.#resolveCwd(input.cwd);
 
-    if (input.permissionMode === 'bypassPermissions' && !this.cfg.allowBypassPermissions) {
+    const policy = policyFor(this.cfg, tier);
+    if (input.permissionMode && !policy.allowedPermissionModes.includes(input.permissionMode)) {
+      // On the public tier this rejects every prompt-reducing mode outright.
+      // On trusted it only rejects bypassPermissions unless the agent's own
+      // config opted in.
       throw new WireErr(
         'permission_denied',
-        'bypassPermissions is disabled on this agent. Enable allowBypassPermissions in the ' +
-          'agent config if you really want the device to be able to turn off approvals.',
+        tier === 'public'
+          ? `permissionMode "${input.permissionMode}" is not available over the public ` +
+            'connection. Connect over the trusted path to use it.'
+          : `permissionMode "${input.permissionMode}" is disabled on this agent. Enable ` +
+            'allowBypassPermissions in the agent config to allow it.',
       );
     }
 
@@ -70,7 +80,18 @@ export class SessionManager {
       resume: input.resume,
       forkSession: input.forkSession,
       permissionTimeoutMs: this.cfg.permissionTimeoutMs,
+      publicPermissionTimeoutMs: this.cfg.publicPermissionTimeoutMs,
       queryFn: this.queryFn,
+      // Resolved per-ask, not fixed at creation: a session outlives its
+      // connections and can be watched from either tier over its lifetime.
+      // Trusted wins when both are attached.
+      resolveTier: () => {
+        // `session` is assigned below, before any permission ask can fire.
+        const watching = this.hub.tiersWatching(session.id);
+        if (watching.has('trusted')) return 'trusted';
+        if (watching.has('public')) return 'public';
+        return 'none';
+      },
       onEvent: (session, seq, type, body) => {
         this.hub.broadcast({
           kind: 'event',
@@ -83,7 +104,7 @@ export class SessionManager {
       },
     };
 
-    const session = new ChatSession(opts);
+    const session: ChatSession = new ChatSession(opts);
     this.#sessions.set(session.id, session);
     session.start();
     return session;
@@ -133,9 +154,11 @@ export function registerChatOps(hub: Hub, manager: SessionManager): void {
       resume?: string;
       forkSession?: boolean;
     };
-    const session = manager.create(input);
+    const session = manager.create(input, conn.tier);
     // Starting a session implies watching it. Without this the creator gets
     // no events until it separately attaches, which reads as a dead session.
+    // Safe to do after create(): the session cannot raise a permission ask
+    // until a claude/send drives a turn, which is necessarily later.
     conn.subscriptions.add(session.id);
     return { sessionId: session.id, resumed: Boolean(input.resume) };
   });
@@ -174,12 +197,17 @@ export function registerChatOps(hub: Hub, manager: SessionManager): void {
     return { sessions: manager.list(limit) };
   });
 
-  hub.register('claude/permission-respond', ({ body }) => {
+  hub.register('claude/permission-respond', ({ body, conn }) => {
     const { sessionId, requestId, decision } = body as {
       sessionId: string;
       requestId: string;
       decision: Parameters<ChatSession['respondToPermission']>[1];
     };
-    return { applied: manager.get(sessionId).respondToPermission(requestId, decision) };
+    // The responder's tier decides whether a session-scoped grant may be
+    // created — a public client can allow this call but cannot buy silence
+    // for the next one.
+    return {
+      applied: manager.get(sessionId).respondToPermission(requestId, decision, conn.tier),
+    };
   });
 }

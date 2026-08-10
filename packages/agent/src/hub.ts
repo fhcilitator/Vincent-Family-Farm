@@ -8,6 +8,7 @@ import {
   type Envelope,
   type Event,
   type ErrorCode,
+  type TrustTier,
 } from '@vff/protocol';
 
 export class WireErr extends Error {
@@ -24,6 +25,12 @@ export class WireErr extends Error {
 export interface Conn {
   id: string;
   socket: WebSocket;
+  /**
+   * Which listener accepted this connection. Set once at accept time and
+   * never mutated — the whole security property depends on a client being
+   * unable to influence it.
+   */
+  readonly tier: TrustTier;
   /** Set once `system/hello` succeeds. Nothing else is served before then. */
   deviceId: string | null;
   /** Streams this connection is currently receiving events for. */
@@ -53,10 +60,11 @@ export class Hub {
     this.#handlers.set(op, handler);
   }
 
-  add(socket: WebSocket): Conn {
+  add(socket: WebSocket, tier: TrustTier): Conn {
     const conn: Conn = {
       id: nanoid(),
       socket,
+      tier,
       deviceId: null,
       subscriptions: new Set(),
       alive: true,
@@ -75,6 +83,21 @@ export class Hub {
 
   get connectionCount(): number {
     return this.#conns.size;
+  }
+
+  /**
+   * Tiers currently subscribed to a stream.
+   *
+   * Drives session-scoped approval: a stored grant only suppresses a prompt
+   * while a trusted client is actually attached. Approve something at home
+   * and it stops nagging; walk out of the house and the same call asks again.
+   */
+  tiersWatching(stream: string): Set<TrustTier> {
+    const tiers = new Set<TrustTier>();
+    for (const conn of this.#conns.values()) {
+      if (conn.deviceId && conn.subscriptions.has(stream)) tiers.add(conn.tier);
+    }
+    return tiers;
   }
 
   /** Push an event to every connection subscribed to its stream. */

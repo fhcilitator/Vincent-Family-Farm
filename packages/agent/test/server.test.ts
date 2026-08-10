@@ -11,8 +11,8 @@ let agent: RunningAgent;
 let url: string;
 
 before(async () => {
-  agent = await start(loadConfig({ token: TOKEN, port: 0, roots: [process.cwd()] }));
-  url = `ws://127.0.0.1:${agent.port}`;
+  agent = await start(loadConfig({ token: TOKEN, listeners: { trusted: { port: 0 }, public: { port: 0 } }, roots: [process.cwd()] }));
+  url = `ws://127.0.0.1:${agent.ports.trusted}`;
 });
 
 after(async () => {
@@ -169,14 +169,14 @@ describe('request handling', () => {
 describe('startup guards', () => {
   test('refuses to run without a token', async () => {
     await assert.rejects(
-      () => start(loadConfig({ token: '', port: 0 })),
+      () => start(loadConfig({ token: '', listeners: { trusted: { port: 0 }, public: null } })),
       /will not run unauthenticated/,
     );
   });
 
   test('refuses to bind 0.0.0.0 without an explicit override', async () => {
     await assert.rejects(
-      () => start(loadConfig({ token: 't', host: '0.0.0.0', port: 0 })),
+      () => start(loadConfig({ token: 't', host: '0.0.0.0', listeners: { trusted: { port: 0 }, public: null } })),
       /Refusing to bind 0\.0\.0\.0/,
     );
   });

@@ -1,18 +1,26 @@
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
-import { PROTOCOL_VERSION } from '@vff/protocol';
+import { PROTOCOL_VERSION, type TrustTier } from '@vff/protocol';
 import { Hub, WireErr } from './hub.js';
 import { SessionManager, registerChatOps } from './chat/manager.js';
-import type { AgentConfig } from './config.js';
+import { policyFor, type AgentConfig } from './config.js';
 
 export interface RunningAgent {
   hub: Hub;
   sessions: SessionManager;
-  port: number;
+  /** Actual bound port per tier, for tests and for logging. */
+  ports: { trusted: number | null; public: number | null };
   close(): Promise<void>;
 }
 
 const AGENT_VERSION = '0.1.0';
+
+interface Listener {
+  tier: TrustTier;
+  server: http.Server;
+  wss: WebSocketServer;
+  port: number;
+}
 
 export async function start(cfg: AgentConfig): Promise<RunningAgent> {
   if (cfg.host === '0.0.0.0' && process.env.VIBE_I_KNOW_WHAT_IM_DOING !== '1') {
@@ -24,16 +32,73 @@ export async function start(cfg: AgentConfig): Promise<RunningAgent> {
   if (!cfg.token) {
     throw new Error('No token configured. Set VIBE_TOKEN — the agent will not run unauthenticated.');
   }
+  if (!cfg.listeners.trusted && !cfg.listeners.public) {
+    throw new Error('No listeners configured — set at least one of trusted or public.');
+  }
+  if (
+    cfg.listeners.trusted &&
+    cfg.listeners.public &&
+    cfg.listeners.trusted.port === cfg.listeners.public.port &&
+    // Port 0 means "assign an ephemeral port", so two zeros are two different
+    // ports at runtime and are fine.
+    cfg.listeners.trusted.port !== 0
+  ) {
+    // Sharing a real port would collapse the two tiers into one and silently
+    // grant trusted privileges to public traffic.
+    throw new Error('trusted and public listeners must use different ports.');
+  }
 
   const hub = new Hub();
   const sessions = new SessionManager(cfg, hub);
   registerSystemOps(hub, cfg);
   registerChatOps(hub, sessions);
 
+  const listeners: Listener[] = [];
+  for (const tier of ['trusted', 'public'] as const) {
+    const conf = cfg.listeners[tier];
+    if (!conf) continue;
+    listeners.push(await bind(hub, cfg, tier, conf.port));
+  }
+
+  const stopHeartbeat = hub.startHeartbeat();
+
+  return {
+    hub,
+    sessions,
+    ports: {
+      trusted: listeners.find((l) => l.tier === 'trusted')?.port ?? null,
+      public: listeners.find((l) => l.tier === 'public')?.port ?? null,
+    },
+    async close() {
+      stopHeartbeat();
+      sessions.closeAll();
+      for (const l of listeners) {
+        for (const socket of l.wss.clients) socket.terminate();
+        await new Promise<void>((resolve) => l.wss.close(() => resolve()));
+        await new Promise<void>((resolve) => l.server.close(() => resolve()));
+      }
+    },
+  };
+}
+
+/**
+ * One listener per trust tier.
+ *
+ * The tier is baked in here, at accept time, from which socket the connection
+ * arrived on. Nothing downstream can change it and no client header
+ * influences it — that unforgeability is the entire point of using two
+ * sockets rather than inspecting X-Forwarded-For.
+ */
+async function bind(
+  hub: Hub,
+  cfg: AgentConfig,
+  tier: TrustTier,
+  port: number,
+): Promise<Listener> {
   const server = http.createServer((req, res) => {
     if (req.url === '/health') {
       res.writeHead(200, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ ok: true, agentVersion: AGENT_VERSION }));
+      res.end(JSON.stringify({ ok: true, agentVersion: AGENT_VERSION, tier }));
       return;
     }
     res.writeHead(404).end();
@@ -50,32 +115,23 @@ export async function start(cfg: AgentConfig): Promise<RunningAgent> {
       socket.close(4401, 'unauthorized');
       return;
     }
-    hub.add(socket);
+    hub.add(socket, tier);
   });
-
-  const stopHeartbeat = hub.startHeartbeat();
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(cfg.port, cfg.host, () => {
+    server.listen(port, cfg.host, () => {
       server.removeListener('error', reject);
       resolve();
     });
   });
 
   const addr = server.address();
-  const port = typeof addr === 'object' && addr ? addr.port : cfg.port;
-
   return {
-    hub,
-    sessions,
-    port,
-    async close() {
-      stopHeartbeat();
-      sessions.closeAll();
-      await new Promise<void>((resolve) => wss.close(() => resolve()));
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-    },
+    tier,
+    server,
+    wss,
+    port: typeof addr === 'object' && addr ? addr.port : port,
   };
 }
 
@@ -97,9 +153,11 @@ function registerSystemOps(hub: Hub, cfg: AgentConfig): void {
       protocolVersion: PROTOCOL_VERSION,
       agentVersion: AGENT_VERSION,
       workspaceRoot: cfg.roots[0] ?? process.cwd(),
+      tier: conn.tier,
+      // Sent so the app shows the restrictions actually in force rather than
+      // inferring them from which URL it dialled.
+      policy: policyFor(cfg, conn.tier),
       capabilities: {
-        // Flipped on as each phase lands, so the app greys out dead UI rather
-        // than erroring on it.
         claude: true,
         pty: false,
         git: false,

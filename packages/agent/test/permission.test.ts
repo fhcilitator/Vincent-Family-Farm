@@ -50,6 +50,10 @@ function harness(overrides: Partial<ChatSessionOptions> = {}): Harness {
   const session = new ChatSession({
     cwd: process.cwd(),
     permissionTimeoutMs: 50,
+    publicPermissionTimeoutMs: 20,
+    // Default to trusted so these tests exercise the permissive path; the
+    // tier-specific behaviour has its own suite in tiers.test.ts.
+    resolveTier: () => 'trusted',
     queryFn,
     onEvent: (_s, _seq, type, body) => emitted.push({ type, body }),
     ...overrides,
@@ -218,7 +222,7 @@ describe('allow-for-session scoping', () => {
     const h = harness({ permissionTimeoutMs: 0 });
     const first = h.askPermission('Bash', { command: 'npm test' });
     const { requestId } = (await h.waitFor(E.permissionPending)) as { requestId: string };
-    h.session.respondToPermission(requestId, { allow: true, scope: 'session' });
+    h.session.respondToPermission(requestId, { allow: true, scope: 'session' }, 'trusted');
     await first;
 
     const before = h.emitted.filter((e) => e.type === E.permissionPending).length;
@@ -234,7 +238,7 @@ describe('allow-for-session scoping', () => {
     const h = harness({ permissionTimeoutMs: 20 });
     const first = h.askPermission('Bash', { command: 'npm test' });
     const { requestId } = (await h.waitFor(E.permissionPending)) as { requestId: string };
-    h.session.respondToPermission(requestId, { allow: true, scope: 'session' });
+    h.session.respondToPermission(requestId, { allow: true, scope: 'session' }, 'trusted');
     await first;
 
     // Approving `npm test` must not silently approve `rm -rf /`.

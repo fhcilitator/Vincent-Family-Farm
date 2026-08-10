@@ -5,7 +5,7 @@ import { WebSocketServer } from 'ws';
 import type { CanUseTool } from '@anthropic-ai/claude-agent-sdk';
 import { Hub } from '../src/hub.js';
 import { SessionManager, registerChatOps } from '../src/chat/manager.js';
-import { loadConfig } from '../src/config.js';
+import { loadConfig, policyFor } from '../src/config.js';
 import { AgentClient } from '../src/client/client.js';
 import { PROTOCOL_VERSION, events, type Event } from '@vff/protocol';
 
@@ -25,13 +25,14 @@ let wss: WebSocketServer;
 let hub: Hub;
 let manager: SessionManager;
 let url: string;
+let cfg: ReturnType<typeof loadConfig>;
 /** Drives the fake SDK for whichever session was created last. */
 let emitToSession: ((type: string, body: unknown) => void) | null = null;
 let capturedCanUseTool: CanUseTool | undefined;
 
 before(async () => {
   hub = new Hub();
-  const cfg = loadConfig({ token: TOKEN, port: 0, roots: [process.cwd()] });
+  cfg = loadConfig({ token: TOKEN, listeners: { trusted: { port: 0 }, public: { port: 0 } }, roots: [process.cwd()] });
 
   const queryFn = ((args: { options?: { canUseTool?: CanUseTool } }) => {
     capturedCanUseTool = args.options?.canUseTool;
@@ -53,6 +54,8 @@ before(async () => {
       protocolVersion: PROTOCOL_VERSION,
       agentVersion: 'test',
       workspaceRoot: process.cwd(),
+      tier: conn.tier,
+      policy: policyFor(cfg, conn.tier),
       capabilities: { claude: true, pty: false, git: false, files: false },
     };
   });
@@ -62,7 +65,7 @@ before(async () => {
   wss.on('connection', (socket, req) => {
     const auth = req.headers.authorization ?? '';
     if (auth !== `Bearer ${TOKEN}`) return socket.close(4401);
-    hub.add(socket);
+    hub.add(socket, 'trusted');
   });
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   const addr = server.address();
