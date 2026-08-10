@@ -37,14 +37,49 @@ export const ClaudeThinking = z.object({ active: z.boolean() });
 
 export const ClaudeTurnDone = z.object({
   stopReason: z.string().nullable(),
-  /** Cumulative for the session, so the app can show spend. */
   usage: z
     .object({
       inputTokens: z.number().int().nonnegative(),
       outputTokens: z.number().int().nonnegative(),
+      /**
+       * Null under a subscription login, which is the expected setup here.
+       * The app shows rate-limit headroom instead — a `$0.0000` chip is worse
+       * than no chip. Kept on the wire for API-key deployments.
+       */
       costUsd: z.number().nonnegative().nullable(),
     })
     .nullable(),
+});
+
+/**
+ * Rate-limit headroom. Under a subscription this is the number that actually
+ * matters, and it replaces the cost badge.
+ *
+ * The case this exists for: a long autonomous run stalls on a five-hour limit
+ * while the phone is in a pocket. Coming back to "hit your limit at 2:04pm,
+ * resets 7:04pm" is a working product; coming back to a silently stalled
+ * session is not.
+ */
+export const ClaudeRateLimit = z.object({
+  status: z.enum(['allowed', 'allowed_warning', 'rejected']),
+  /** Which window — five_hour, seven_day, etc. Passed through as-is. */
+  limitType: z.string().nullable(),
+  /** 0..1 fraction of the window consumed, when the SDK reports it. */
+  utilization: z.number().nullable(),
+  /** Epoch ms when the window resets. */
+  resetsAt: z.number().nullable(),
+  /** Pre-rendered so the phone doesn't have to know limit-type vocabulary. */
+  summary: z.string(),
+});
+
+/**
+ * Claude auth trouble on the dev box, surfaced mid-session rather than as an
+ * opaque pump failure. An OAuth token can expire between the boot preflight
+ * and any given turn.
+ */
+export const ClaudeAuthTrouble = z.object({
+  message: z.string(),
+  remedy: z.string().nullable(),
 });
 
 export const ClaudeSessionError = z.object({
@@ -131,6 +166,8 @@ export const EVENT_TYPES = {
     error: 'claude/error',
     permissionPending: 'claude/permission-pending',
     permissionResolved: 'claude/permission-resolved',
+    rateLimit: 'claude/rate-limit',
+    authTrouble: 'claude/auth-trouble',
     /** Log rolled over; the client renders "…earlier output dropped". */
     truncated: 'claude/truncated',
   },

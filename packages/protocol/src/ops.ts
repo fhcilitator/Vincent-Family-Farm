@@ -60,12 +60,33 @@ export const EffectivePolicySchema = z.object({
   permissionTimeoutMs: z.number().int().nonnegative(),
 });
 
+/**
+ * Whether the dev box can actually talk to Claude.
+ *
+ * The phone holds no Anthropic credential — the agent inherits whatever the
+ * `claude` CLI is signed into. This reports that state so the app can show an
+ * actionable banner instead of letting the user discover the problem as a
+ * failed message.
+ *
+ * Best-effort: only a real request proves a credential is valid, so
+ * `usable: true` means "nothing is obviously wrong", not "guaranteed".
+ */
+export const ClaudeAuthStateSchema = z.object({
+  usable: z.boolean(),
+  source: z.enum(['env-api-key', 'env-auth-token', 'cli-login', 'ant-profile', 'none']),
+  binaryFound: z.boolean(),
+  detail: z.string(),
+  /** Exact command to run on the dev box, when broken. */
+  remedy: z.string().nullable(),
+});
+
 export const SystemHelloRes = z.object({
   protocolVersion: z.number().int().positive(),
   agentVersion: z.string(),
   workspaceRoot: z.string(),
   tier: TrustTierSchema,
   policy: EffectivePolicySchema,
+  claudeAuth: ClaudeAuthStateSchema,
   /** Capabilities the agent actually has, so the app can hide dead UI. */
   capabilities: z.object({
     claude: z.boolean(),

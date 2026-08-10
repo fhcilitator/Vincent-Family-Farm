@@ -56,6 +56,14 @@ before(async () => {
       workspaceRoot: process.cwd(),
       tier: conn.tier,
       policy: policyFor(cfg, conn.tier),
+      // Stubbed: these tests exercise reconnect, not the real dev box's auth.
+      claudeAuth: {
+        usable: true,
+        source: 'cli-login' as const,
+        binaryFound: true,
+        detail: 'test stub',
+        remedy: null,
+      },
       capabilities: { claude: true, pty: false, git: false, files: false },
     };
   });

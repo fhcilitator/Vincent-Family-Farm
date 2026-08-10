@@ -4,6 +4,7 @@ import { PROTOCOL_VERSION, type TrustTier } from '@vff/protocol';
 import { Hub, WireErr } from './hub.js';
 import { SessionManager, registerChatOps } from './chat/manager.js';
 import { policyFor, type AgentConfig } from './config.js';
+import { checkClaudeAuth, type ClaudeAuthState } from './preflight.js';
 
 export interface RunningAgent {
   hub: Hub;
@@ -48,9 +49,15 @@ export async function start(cfg: AgentConfig): Promise<RunningAgent> {
     throw new Error('trusted and public listeners must use different ports.');
   }
 
+  // Checked once at boot rather than on the user's first message, where a
+  // missing login looks like a mystery failure 30 seconds in. The agent
+  // starts anyway if this fails — terminal, files, and git don't need Claude,
+  // and they're exactly what you'd want in order to fix the problem.
+  const claudeAuth = checkClaudeAuth();
+
   const hub = new Hub();
   const sessions = new SessionManager(cfg, hub);
-  registerSystemOps(hub, cfg);
+  registerSystemOps(hub, cfg, claudeAuth);
   registerChatOps(hub, sessions);
 
   const listeners: Listener[] = [];
@@ -135,7 +142,7 @@ async function bind(
   };
 }
 
-function registerSystemOps(hub: Hub, cfg: AgentConfig): void {
+function registerSystemOps(hub: Hub, cfg: AgentConfig, claudeAuth: ClaudeAuthState): void {
   hub.register('system/hello', ({ body, conn }) => {
     const hello = body as { protocolVersion: number; deviceId: string; clientVersion: string };
 
@@ -157,8 +164,11 @@ function registerSystemOps(hub: Hub, cfg: AgentConfig): void {
       // Sent so the app shows the restrictions actually in force rather than
       // inferring them from which URL it dialled.
       policy: policyFor(cfg, conn.tier),
+      claudeAuth,
       capabilities: {
-        claude: true,
+        // Reflects reality rather than a hardcoded true, so the app greys out
+        // chat instead of offering a feature that will fail on first use.
+        claude: claudeAuth.usable,
         pty: false,
         git: false,
         files: false,

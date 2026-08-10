@@ -41,6 +41,17 @@ export function translate(msg: SDKMessage): TranslatedEvent[] {
         },
       ];
 
+    // Rate-limit headroom. Dropping this would mean a run that stalls on a
+    // five-hour limit looks like a hang.
+    case 'rate_limit_event':
+      return [{ type: E.rateLimit, body: translateRateLimit(msg) }];
+
+    // Auth trouble mid-session — an OAuth token can expire between the boot
+    // preflight and any given turn. Surfacing it as a generic pump error
+    // would read as a mystery failure.
+    case 'auth_status':
+      return translateAuthStatus(msg);
+
     case 'system':
       // Only the init handshake is interesting; it confirms model and cwd.
       if (msg.subtype === 'init') {
@@ -57,6 +68,88 @@ export function translate(msg: SDKMessage): TranslatedEvent[] {
       // Unknown or uninteresting kind. Dropping is correct and deliberate.
       return [];
   }
+}
+
+/** The credential source the SDK reports on session init, if present. */
+export function apiKeySourceOf(msg: SDKMessage): string | null {
+  if (msg.type !== 'system' || msg.subtype !== 'init') return null;
+  const source = (msg as { apiKeySource?: unknown }).apiKeySource;
+  return typeof source === 'string' ? source : null;
+}
+
+function translateRateLimit(msg: Extract<SDKMessage, { type: 'rate_limit_event' }>): unknown {
+  const info = (msg as { rate_limit_info?: Record<string, unknown> }).rate_limit_info ?? {};
+
+  const status =
+    info.status === 'rejected' || info.status === 'allowed_warning' ? info.status : 'allowed';
+  const limitType = typeof info.rateLimitType === 'string' ? info.rateLimitType : null;
+  const utilization = typeof info.utilization === 'number' ? info.utilization : null;
+  const resetsAt = typeof info.resetsAt === 'number' ? info.resetsAt : null;
+
+  return {
+    status,
+    limitType,
+    utilization,
+    resetsAt,
+    summary: summarizeRateLimit(status, limitType, utilization, resetsAt),
+  };
+}
+
+function summarizeRateLimit(
+  status: string,
+  limitType: string | null,
+  utilization: number | null,
+  resetsAt: number | null,
+): string {
+  const window = describeWindow(limitType);
+  const reset = resetsAt ? ` Resets ${new Date(resetsAt).toLocaleTimeString()}.` : '';
+
+  if (status === 'rejected') return `Rate limit reached on your ${window}.${reset}`;
+
+  if (status === 'allowed_warning') {
+    const pct = utilization != null ? `${Math.round(utilization * 100)}% of ` : 'Approaching ';
+    return `${pct}your ${window} used.${reset}`;
+  }
+
+  const pct = utilization != null ? `${Math.round(utilization * 100)}%` : 'OK';
+  return `${pct} of your ${window} used.`;
+}
+
+function describeWindow(limitType: string | null): string {
+  switch (limitType) {
+    case 'five_hour':
+      return '5-hour limit';
+    case 'seven_day':
+      return 'weekly limit';
+    case 'seven_day_opus':
+      return 'weekly Opus limit';
+    case 'seven_day_sonnet':
+      return 'weekly Sonnet limit';
+    case 'overage':
+    case 'seven_day_overage_included':
+      return 'overage allowance';
+    default:
+      return 'usage limit';
+  }
+}
+
+function translateAuthStatus(
+  msg: Extract<SDKMessage, { type: 'auth_status' }>,
+): TranslatedEvent[] {
+  const error = (msg as { error?: unknown }).error;
+  // Only an actual error is worth interrupting the user for; the SDK also
+  // emits this message during normal, successful authentication.
+  if (typeof error !== 'string' || error.length === 0) return [];
+
+  return [
+    {
+      type: E.authTrouble,
+      body: {
+        message: error,
+        remedy: 'Run `claude` on the dev box (or in this app’s terminal) and sign in.',
+      },
+    },
+  ];
 }
 
 function translateStreamEvent(msg: Extract<SDKMessage, { type: 'stream_event' }>): TranslatedEvent[] {

@@ -2,6 +2,7 @@
 import crypto from 'node:crypto';
 import { loadConfig } from './config.js';
 import { start } from './server.js';
+import { checkClaudeAuth } from './preflight.js';
 
 const [, , command = 'start'] = process.argv;
 
@@ -30,6 +31,9 @@ async function runStart(): Promise<void> {
     console.log(`    expose with: tailscale funnel --bg ${agent.ports.public}`);
     console.log(`            or:  cloudflared tunnel --url http://${cfg.host}:${agent.ports.public}`);
   }
+  const auth = checkClaudeAuth();
+  console.log(`  claude: ${auth.usable ? 'ok' : 'UNAVAILABLE'} — ${auth.detail}`);
+  if (auth.remedy) console.log(`          fix: ${auth.remedy}`);
   console.log(`  roots: ${cfg.roots.join(', ')}`);
   console.log(`  permission timeout: ${cfg.permissionTimeoutMs}ms trusted / ` +
     `${cfg.publicPermissionTimeoutMs}ms public`);
