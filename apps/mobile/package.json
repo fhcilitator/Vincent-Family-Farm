@@ -1,0 +1,32 @@
+{
+  "name": "@vff/mobile",
+  "version": "0.1.0",
+  "private": true,
+  "main": "expo-router/entry",
+  "scripts": {
+    "start": "expo start --dev-client",
+    "android": "expo run:android",
+    "prebuild": "expo prebuild --platform android",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@vff/client-core": "*",
+    "@vff/protocol": "*",
+    "expo": "~56.0.19",
+    "expo-constants": "~56.0.23",
+    "expo-dev-client": "~56.0.24",
+    "expo-linking": "~56.0.16",
+    "expo-router": "~56.2.18",
+    "expo-secure-store": "~56.0.4",
+    "expo-status-bar": "~56.0.4",
+    "react": "19.2.3",
+    "react-native": "0.85.0",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "~4.26.0",
+    "zustand": "^5.0.14"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.0",
+    "typescript": "~5.7.2"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "expo": {
+    "name": "vibe agent",
+    "slug": "vff-vibe-agent",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "vffagent",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "platforms": ["android"],
+    "android": {
+      "package": "com.vincentfamilyfarm.vibeagent",
+      "edgeToEdgeEnabled": true
+    },
+    "plugins": ["expo-router", "expo-secure-store"],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

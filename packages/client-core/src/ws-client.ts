@@ -48,7 +48,17 @@ export interface TrackedStream {
 }
 
 export interface WsClientOptions {
-  url: string;
+  /**
+   * One endpoint, or several in preference order.
+   *
+   * A paired agent is reachable two ways — the tailnet (`trusted`) and a
+   * public tunnel — and which one answers decides how much the agent will
+   * permit, so the order is not cosmetic: trusted first means "approve once at
+   * home" keeps working whenever home is reachable. Each reconnect attempt
+   * advances to the next endpoint, so a tailnet that is simply not up right
+   * now costs one backoff interval rather than blocking the app entirely.
+   */
+  url: string | string[];
   token: string;
   deviceId: string;
   clientVersion?: string;
@@ -86,10 +96,14 @@ interface Pending {
  *    platform.
  */
 export class WsClient {
-  #opts: Required<Omit<WsClientOptions, 'createSocket' | 'clientVersion'>> & {
+  #opts: Required<Omit<WsClientOptions, 'createSocket' | 'clientVersion' | 'url'>> & {
     createSocket: SocketFactory;
     clientVersion: string;
   };
+  #endpoints: string[];
+  #endpointIndex = 0;
+  /** Whether the connection that just died had completed a handshake. */
+  #hadSuccess = false;
   #socket: SocketLike | null = null;
   #state: ConnectionState = 'disconnected';
   #pending = new Map<string, Pending>();
@@ -106,8 +120,10 @@ export class WsClient {
   #errorListeners = new Set<Listener<{ phase: 'handshake' | 'resume' | 'frame'; error: Error }>>();
 
   constructor(options: WsClientOptions) {
+    this.#endpoints = (Array.isArray(options.url) ? options.url : [options.url]).filter(Boolean);
+    if (this.#endpoints.length === 0) throw new Error('WsClient needs at least one url');
+
     this.#opts = {
-      url: options.url,
       token: options.token,
       deviceId: options.deviceId,
       clientVersion: options.clientVersion ?? '0.1.0',
@@ -123,6 +139,25 @@ export class WsClient {
 
   get state(): ConnectionState {
     return this.#state;
+  }
+
+  /**
+   * The endpoint the next attempt will dial.
+   *
+   * Two different things are deliberately not conflated here. A run of failed
+   * attempts rotates through the list, looking for one that answers. But a
+   * connection that worked and then dropped starts the search over at the
+   * most-preferred endpoint — otherwise walking back in range of the tailnet
+   * would leave you on the restricted public path until the app was killed,
+   * with more approval prompts and shorter timeouts and no visible reason.
+   */
+  get url(): string {
+    return this.#endpoints[this.#endpointIndex % this.#endpoints.length] as string;
+  }
+
+  /** All configured endpoints, in preference order. */
+  get endpoints(): readonly string[] {
+    return this.#endpoints;
   }
 
   onStateChange(fn: Listener<ConnectionState>): () => void {
@@ -227,7 +262,7 @@ export class WsClient {
 
     let socket: SocketLike;
     try {
-      socket = this.#opts.createSocket(this.#opts.url, this.#opts.token);
+      socket = this.#opts.createSocket(this.url, this.#opts.token);
     } catch {
       this.#scheduleReconnect();
       return;
@@ -260,8 +295,11 @@ export class WsClient {
       for (const fn of this.#helloListeners) fn(hello);
 
       // Successful handshake means this endpoint works — reset backoff so a
-      // later blip retries fast rather than inheriting a long delay.
+      // later blip retries fast rather than inheriting a long delay, and let
+      // the next connect cycle start from the most-preferred endpoint again.
       this.#attempt = 0;
+      this.#endpointIndex = 0;
+      this.#hadSuccess = true;
 
       await this.#resumeStreams();
       this.#startHeartbeat();
@@ -390,6 +428,12 @@ export class WsClient {
 
   #scheduleReconnect(): void {
     if (this.#closedByUser || this.#reconnectTimer) return;
+
+    // A connection that worked and then dropped gets one attempt at the
+    // preferred endpoint before the search moves on; only a run of outright
+    // failures rotates the list.
+    if (this.#hadSuccess) this.#hadSuccess = false;
+    else this.#endpointIndex++;
 
     // Exponential backoff with jitter. The jitter matters when several
     // clients reconnect after the same outage — without it they retry in

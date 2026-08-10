@@ -1,0 +1,14 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noEmit": true,
+    "paths": {
+      "@/*": ["./src/*"],
+      "@vff/client-core": ["../../packages/client-core/src/index.ts"],
+      "@vff/protocol": ["../../packages/protocol/src/index.ts"]
+    }
+  },
+  "include": ["app/**/*", "src/**/*", ".expo/types/**/*", "expo-env.d.ts"]
+}

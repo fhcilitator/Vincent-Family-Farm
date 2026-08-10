@@ -45,6 +45,7 @@ after(async () => {
  */
 function harness(over: Partial<ConstructorParameters<typeof WsClient>[0]> = {}) {
   const sockets: SocketLike[] = [];
+  const dialled: string[] = [];
 
   const client = new WsClient({
     url,
@@ -55,6 +56,7 @@ function harness(over: Partial<ConstructorParameters<typeof WsClient>[0]> = {}) 
     minBackoffMs: 20,
     maxBackoffMs: 200,
     createSocket: (u, t) => {
+      dialled.push(u);
       const s = new WebSocket(u, {
         headers: { authorization: `Bearer ${t}` },
       }) as unknown as SocketLike;
@@ -66,6 +68,8 @@ function harness(over: Partial<ConstructorParameters<typeof WsClient>[0]> = {}) 
 
   return {
     client,
+    /** Every URL the client has actually dialled, in order. */
+    dialled,
     async drop() {
       sockets[sockets.length - 1]?.close(4999, 'test drop');
       await new Promise((r) => setTimeout(r, 40));
@@ -355,5 +359,57 @@ describe('stream resume', () => {
     await waitForState(client, 'live', 8000);
     assert.equal(client.lastSeqOf(sessionId), session.log.head);
     client.close();
+  });
+});
+
+/**
+ * A paired agent has two addresses — the tailnet and a public tunnel — and
+ * which one answers decides how much the agent will permit. So endpoint
+ * selection is a security-relevant behaviour, not a convenience, and it is
+ * tested here rather than left to untestable app code.
+ */
+describe('endpoint preference', () => {
+  /** A port nothing listens on, standing in for "the tailnet is not up". */
+  const DEAD = 'ws://127.0.0.1:9';
+
+  test('dials the preferred endpoint first, then falls back', async () => {
+    const { client, dialled } = harness({ url: [DEAD, url] });
+    client.connect();
+    await waitForState(client, 'live', 8000);
+
+    assert.equal(dialled[0], DEAD, 'the first attempt must use the preferred endpoint');
+    assert.equal(dialled[1], url, 'a failure must advance to the next endpoint');
+    client.close();
+  });
+
+  test('returns to the preferred endpoint on the next connect cycle', async () => {
+    // The preferred endpoint is live and the fallback is dead, so a client
+    // that kept advancing after a success would dial DEAD here. It must not:
+    // walking back into tailnet range has to return you to the trusted tier,
+    // not leave you on the restricted public path until the app is force-quit.
+    const { client, dialled, drop } = harness({ url: [url, DEAD] });
+    client.connect();
+    await waitForState(client, 'live');
+
+    await drop();
+    await waitForState(client, 'live', 8000);
+
+    assert.deepEqual(dialled, [url, url], 'a fresh cycle must start at the preferred endpoint');
+    client.close();
+  });
+
+  test('a single url string still works', async () => {
+    const { client } = harness({ url });
+    assert.deepEqual(client.endpoints, [url]);
+    client.connect();
+    await waitForState(client, 'live');
+    client.close();
+  });
+
+  test('refuses to construct with no endpoints', () => {
+    assert.throws(
+      () => new WsClient({ url: [], token: TOKEN, deviceId: 'x', createSocket: () => { throw new Error('unused'); } }),
+      /at least one url/,
+    );
   });
 });
