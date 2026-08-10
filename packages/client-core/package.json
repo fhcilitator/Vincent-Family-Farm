@@ -1,0 +1,30 @@
+{
+  "name": "@vff/client-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@vff/protocol": "*"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.5.13",
+    "ws": "^8.18.0",
+    "@vff/agent": "*"
+  }
+}

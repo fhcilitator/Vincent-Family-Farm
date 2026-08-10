@@ -111,13 +111,19 @@ async function bind(
     res.writeHead(404).end();
   });
 
-  const wss = new WebSocketServer({ server, maxPayload: 4 * 1024 * 1024 });
+  const wss = new WebSocketServer({
+    server,
+    maxPayload: 4 * 1024 * 1024,
+    // Echo back the token subprotocol so browser handshakes complete. `ws`
+    // fails the connection if the client offered protocols and we select none.
+    handleProtocols: (protocols) => {
+      for (const p of protocols) if (p.startsWith(TOKEN_PROTOCOL_PREFIX)) return p;
+      return false;
+    },
+  });
 
   wss.on('connection', (socket, req) => {
-    // Bearer token on the upgrade request. Not a query param — those land in
-    // proxy and server logs.
-    const auth = req.headers.authorization ?? '';
-    const presented = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    const presented = extractToken(req.headers);
     if (!timingSafeEqual(presented, cfg.token)) {
       socket.close(4401, 'unauthorized');
       return;
@@ -180,6 +186,34 @@ function registerSystemOps(hub: Hub, cfg: AgentConfig, claudeAuth: ClaudeAuthSta
     const { nonce } = body as { nonce: string };
     return { nonce, serverTime: Date.now() };
   });
+}
+
+/**
+ * Browsers cannot set headers on a WebSocket handshake — `Authorization` is
+ * simply unavailable to `new WebSocket(...)`. The standard workaround is to
+ * smuggle the credential through `Sec-WebSocket-Protocol`, which browsers do
+ * control, and have the server echo it back.
+ *
+ * A query parameter would be the other option and is worse: URLs land in
+ * proxy logs, server access logs, and browser history.
+ *
+ * Node and React Native can both send real headers, so they keep using
+ * `Authorization` and never touch this path.
+ */
+export const TOKEN_PROTOCOL_PREFIX = 'vff.token.';
+
+function extractToken(headers: http.IncomingHttpHeaders): string {
+  const auth = headers.authorization ?? '';
+  if (auth.startsWith('Bearer ')) return auth.slice(7);
+
+  const offered = headers['sec-websocket-protocol'];
+  if (typeof offered === 'string') {
+    for (const raw of offered.split(',')) {
+      const p = raw.trim();
+      if (p.startsWith(TOKEN_PROTOCOL_PREFIX)) return p.slice(TOKEN_PROTOCOL_PREFIX.length);
+    }
+  }
+  return '';
 }
 
 /** Constant-time compare so token checks don't leak length or prefix by timing. */
