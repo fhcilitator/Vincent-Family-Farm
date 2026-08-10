@@ -8,8 +8,10 @@ import {
   opName,
   splitOp,
   PROTOCOL_VERSION,
+  MAX_FRAME_BYTES,
   type Envelope,
 } from '../src/index.js';
+import { assertNoNodeGlobals } from '../../../tools/no-node-globals.js';
 
 describe('envelope round-trip', () => {
   const cases: Envelope[] = [
@@ -68,6 +70,34 @@ describe('envelope rejects malformed frames', () => {
       body: { content: 'x'.repeat(5 * 1024 * 1024) },
     });
     assert.throws(() => parseEnvelope(huge), /MAX_FRAME_BYTES/);
+  });
+
+  test('accepts a multi-byte frame that is past the cheap bound but under the cap', () => {
+    // Mostly ASCII with some 3-byte characters: 2M UTF-16 units (so the
+    // length bound stops being decisive) but only ~2.2 MB encoded, which the
+    // exact count has to establish.
+    const raw = JSON.stringify({
+      kind: 'req',
+      id: 'x',
+      ch: 'files',
+      op: 'write',
+      body: { content: 'x'.repeat(1_900_000) + '★'.repeat(100_000) },
+    });
+    assert.ok(raw.length * 3 > MAX_FRAME_BYTES, 'test needs a frame past the cheap bound');
+    assert.equal(parseEnvelope(raw).kind, 'req');
+  });
+
+  /**
+   * This package is imported by the agent, the browser client, and React
+   * Native. A Node-only global here is invisible to `tsc` (Node types are in
+   * scope) and to these tests (they run in Node) — it fails only in a browser,
+   * at runtime, on every frame, and the client's frame-decode guard swallows
+   * it. `Buffer.byteLength` did exactly that, and the symptom was a handshake
+   * that hung with an empty console. Nothing else catches this, so a source
+   * scan does.
+   */
+  test('the source uses no Node-only globals', () => {
+    assertNoNodeGlobals(new URL('../src/', import.meta.url));
   });
 });
 

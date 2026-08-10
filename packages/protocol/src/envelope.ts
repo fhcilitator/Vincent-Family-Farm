@@ -103,6 +103,26 @@ export type Envelope = z.infer<typeof EnvelopeSchema>;
 /** Max frame size. Guards against a hostile peer exhausting memory. */
 export const MAX_FRAME_BYTES = 4 * 1024 * 1024;
 
+/**
+ * Whether a frame is over the size limit, without Node's `Buffer`.
+ *
+ * This package is imported by the agent, the browser client, and React
+ * Native, so it may only use globals all three have. `Buffer.byteLength` was
+ * used here originally and threw a `ReferenceError` on every inbound frame in
+ * the browser — which the client's frame-decode guard swallowed, leaving the
+ * handshake hanging with no visible cause.
+ *
+ * Expressed as a predicate rather than a byte count so the cheap bound is
+ * usable: one UTF-16 code unit encodes to at most 3 UTF-8 bytes (a surrogate
+ * pair is 2 units and 4 bytes, so 2 bytes per unit), so anything short enough
+ * is under the limit without counting. Only near the limit is the exact count
+ * worth the copy `TextEncoder` makes — and PTY output runs this on every frame.
+ */
+export function exceedsFrameLimit(raw: string): boolean {
+  if (raw.length * 3 <= MAX_FRAME_BYTES) return false;
+  return new TextEncoder().encode(raw).length > MAX_FRAME_BYTES;
+}
+
 export function isRequest(e: Envelope): e is Request {
   return e.kind === 'req';
 }
@@ -119,7 +139,7 @@ export function isEvent(e: Envelope): e is Event {
  * buggy agent should not be able to corrupt client state.
  */
 export function parseEnvelope(raw: string): Envelope {
-  if (Buffer.byteLength(raw, 'utf8') > MAX_FRAME_BYTES) {
+  if (exceedsFrameLimit(raw)) {
     throw new Error('frame exceeds MAX_FRAME_BYTES');
   }
   return EnvelopeSchema.parse(JSON.parse(raw));

@@ -103,6 +103,7 @@ export class WsClient {
   #eventListeners = new Set<Listener<Event>>();
   #helloListeners = new Set<Listener<ResBody<'system/hello'>>>();
   #gapListeners = new Set<Listener<{ stream: string; expected: number; got: number }>>();
+  #errorListeners = new Set<Listener<{ phase: 'handshake' | 'resume' | 'frame'; error: Error }>>();
 
   constructor(options: WsClientOptions) {
     this.#opts = {
@@ -140,6 +141,18 @@ export class WsClient {
   onGap(fn: Listener<{ stream: string; expected: number; got: number }>): () => void {
     this.#gapListeners.add(fn);
     return () => this.#gapListeners.delete(fn);
+  }
+
+  /**
+   * Handshake, resume, and frame-decode failures.
+   *
+   * Without this the client retries forever in silence, and a genuinely
+   * broken setup (wrong token, protocol mismatch) is indistinguishable from a
+   * flaky network. The UI needs the reason to tell the user which it is.
+   */
+  onError(fn: Listener<{ phase: 'handshake' | 'resume' | 'frame'; error: Error }>): () => void {
+    this.#errorListeners.add(fn);
+    return () => this.#errorListeners.delete(fn);
   }
 
   /**
@@ -253,9 +266,13 @@ export class WsClient {
       await this.#resumeStreams();
       this.#startHeartbeat();
       this.#setState('live');
-    } catch {
+    } catch (err) {
       // A failed handshake is not retryable in place; drop the socket and let
-      // the normal reconnect path handle backoff.
+      // the normal reconnect path handle backoff. Report it, though — a silent
+      // retry loop hides a wrong token or a version mismatch behind what looks
+      // like a bad network.
+      const error = err instanceof Error ? err : new Error(String(err));
+      for (const fn of this.#errorListeners) fn({ phase: 'handshake', error });
       this.#socket?.close();
     }
   }
@@ -300,8 +317,13 @@ export class WsClient {
     let env;
     try {
       env = parseEnvelope(raw);
-    } catch {
-      // A malformed frame must not take the connection down.
+    } catch (err) {
+      // A malformed frame must not take the connection down — but it must not
+      // vanish either. Dropping these silently once hid a decoder that threw
+      // on *every* frame, which looked exactly like an agent that never
+      // replied. Report and carry on.
+      const error = err instanceof Error ? err : new Error(String(err));
+      for (const fn of this.#errorListeners) fn({ phase: 'frame', error });
       return;
     }
 

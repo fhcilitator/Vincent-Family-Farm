@@ -110,6 +110,26 @@ export class Hub {
     }
   }
 
+  /**
+   * Sever every live connection.
+   *
+   * Backs the "my phone is gone" kill switch — sessions keep running on the
+   * dev box, but every attached device is dropped and must re-authenticate.
+   * Also how tests simulate a network failure the client did not initiate.
+   */
+  disconnectAll(code = 4001, reason = 'disconnected by agent'): number {
+    const count = this.#conns.size;
+    for (const conn of this.#conns.values()) {
+      try {
+        conn.socket.close(code, reason);
+      } catch {
+        conn.socket.terminate();
+      }
+    }
+    this.#conns.clear();
+    return count;
+  }
+
   /** Heartbeat. Mobile sockets go half-open behind carrier NAT without TCP noticing. */
   startHeartbeat(intervalMs = 15_000): () => void {
     const timer = setInterval(() => {
