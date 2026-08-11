@@ -1,8 +1,8 @@
 {
-  "name": "vff-mobile-coding",
+  "name": "vibe-agent",
   "private": true,
   "version": "0.1.0",
-  "description": "Android companion app and dev-box agent for driving Claude Code from a phone",
+  "description": "Android app and dev-box companion agent for driving Claude Code from a phone",
   "workspaces": [
     "packages/*",
     "apps/*"
