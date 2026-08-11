@@ -10,8 +10,13 @@ import {
 } from '@vff/client-core';
 import type { ops, PermissionMode } from '@vff/protocol';
 import type { z } from 'zod';
-import { rnSocket } from './socket';
-import { loadAgent, preferredEndpoints, type AgentConfig } from './agent-store';
+import { makeRnSocket } from './socket';
+import {
+  loadAgent,
+  preferredEndpoints,
+  type AgentConfig,
+  type AgentCredentials,
+} from './agent-store';
 
 type Hello = z.infer<typeof ops.SystemHelloRes>;
 
@@ -25,7 +30,7 @@ interface ConnectionSlice {
   error: string | null;
 
   restore: () => Promise<boolean>;
-  connect: (config: AgentConfig, token: string) => void;
+  connect: (creds: AgentCredentials) => void;
   disconnect: () => void;
   startSession: (permissionMode?: PermissionMode) => Promise<void>;
   send: (text: string) => Promise<void>;
@@ -54,11 +59,11 @@ export const useConnection = create<ConnectionSlice>((set, get) => ({
   async restore() {
     const saved = await loadAgent();
     if (!saved) return false;
-    get().connect(saved.config, saved.token);
+    get().connect(saved);
     return true;
   },
 
-  connect(config, token) {
+  connect({ config, token, accessSecret }) {
     client?.close();
     set({ config, error: null, hello: null });
 
@@ -66,7 +71,10 @@ export const useConnection = create<ConnectionSlice>((set, get) => ({
       url: preferredEndpoints(config),
       token,
       deviceId: 'android',
-      createSocket: rnSocket,
+      createSocket: makeRnSocket({
+        clientId: config.accessClientId,
+        clientSecret: accessSecret,
+      }),
     });
 
     next.onStateChange((state) => set({ state }));

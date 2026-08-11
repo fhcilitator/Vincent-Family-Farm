@@ -21,7 +21,33 @@ type RNWebSocket = new (
   options?: { headers?: Record<string, string> },
 ) => SocketLike;
 
-export const rnSocket: SocketFactory = (url, token) =>
-  new (WebSocket as unknown as RNWebSocket)(url, null, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+export interface AccessServiceToken {
+  clientId: string | null;
+  clientSecret: string | null;
+}
+
+/**
+ * Build the socket factory, optionally carrying a Cloudflare Access service
+ * token.
+ *
+ * The headers are omitted entirely unless both halves are present. Sending
+ * empty ones is worse than sending none: Access treats a malformed service
+ * token differently from an absent one, and the resulting error is less
+ * recognisable than the plain login redirect.
+ */
+export function makeRnSocket(access?: AccessServiceToken): SocketFactory {
+  const clientId = access?.clientId?.trim();
+  const clientSecret = access?.clientSecret?.trim();
+  const accessHeaders: Record<string, string> =
+    clientId && clientSecret
+      ? { 'CF-Access-Client-Id': clientId, 'CF-Access-Client-Secret': clientSecret }
+      : {};
+
+  return (url, token) =>
+    new (WebSocket as unknown as RNWebSocket)(url, null, {
+      headers: { Authorization: `Bearer ${token}`, ...accessHeaders },
+    });
+}
+
+/** No Access credentials — the common case. */
+export const rnSocket: SocketFactory = makeRnSocket();

@@ -39,20 +39,64 @@ listener on 8787, which is harmless — both bind to `127.0.0.1` and only 8788
 gets tunnelled. If you later add `tailscale serve --bg 8787`, the app picks up
 the trusted path with no rebuild.
 
-### 2. Dev box — open the tunnel
+### 2. Dev box — publish it through a tunnel
 
-A Cloudflare quick tunnel needs no account and no domain:
+**With a named Cloudflare tunnel** (recommended — the hostname is stable, so the
+app never needs its address re-typed). Add a hostname to the tunnel you already
+run rather than starting a second one. One ingress rule maps one hostname to one
+local port, so this needs its own subdomain; it cannot share the one serving
+code-server, and path-based sharing does not work because cloudflared does not
+strip the matched prefix.
+
+```yaml
+ingress:
+  - hostname: code.example.com          # code-server, already there
+    service: http://localhost:8080
+  - hostname: vibe.example.com          # the agent
+    service: http://localhost:8788
+  - service: http_status:404            # must stay last
+```
+
+Ingress is evaluated top to bottom, so the new rule goes **above** the catch-all.
+Then point DNS at the tunnel — no API token needed if `cloudflared` on that
+machine is already logged in:
+
+```sh
+cloudflared tunnel route dns <tunnel-name> vibe.example.com
+```
+
+Separate hostnames also keep the two services independently governable, which
+matters for Access: code-server should sit behind a login page and this app
+cannot complete one.
+
+**Without a domain**, a quick tunnel works and needs no account, but its URL
+changes on every restart:
 
 ```sh
 cloudflared tunnel --url http://127.0.0.1:8788
 ```
 
-It prints `https://<random-words>.trycloudflare.com`. The app wants that same
-host as **`wss://<random-words>.trycloudflare.com`**.
+Either way the app wants the hostname as `wss://…`, not `https://…`.
 
 ### 3. Prove the path before waiting on a build
 
-Point the browser dev client at the tunnel URL and token:
+First, one command that also tells you whether Cloudflare Access is in the way:
+
+```sh
+curl -sS https://vibe.example.com/health
+```
+
+- `{"ok":true,"agentVersion":"0.1.0","tier":"public"}` — clear, nothing more to do.
+- An HTML page or a redirect to `*.cloudflareaccess.com` — Access is in front of
+  it. Create a service token in Zero Trust and put both halves into the app's
+  "Cloudflare Access" section. Access intercepts the WebSocket handshake at the
+  edge, so without it the app reports a connection error while `/health` looks
+  fine in a browser — the browser silently completes the login and the app
+  cannot.
+- `502` — the tunnel is fine but nothing is listening on 8788. Step 1 is not
+  running.
+
+Then point the browser dev client at the same URL and token:
 
 ```sh
 npm run dev --workspace=@vff/devclient
@@ -83,8 +127,8 @@ over LAN wifi while the agent link still runs over the tunnel.
 
 Open the link EAS prints, download the APK, allow "install unknown apps" for
 your browser, install. The app opens on the Connect screen: leave the tailnet
-field empty, put the `wss://…trycloudflare.com` URL in the public field, paste
-the token, save.
+field empty, put `wss://vibe.example.com` in the public field, paste the token,
+save. Leave the Cloudflare Access section alone unless step 3 said otherwise.
 
 Expect a green `live` badge and an orange `public` one. Until `claude` is signed
 in on the dev box you will also get the red auth banner with the exact command
@@ -92,11 +136,13 @@ to fix it.
 
 ### The tunnel is a public internet endpoint
 
-A `trycloudflare.com` URL points at a process that runs shell commands as your
-user. The random hostname is not a security control — **the token is the only
-thing protecting it**. Use the generated 32-byte token and nothing shorter, stop
-`cloudflared` when you are not testing, and treat a named tunnel behind
-Cloudflare Access as the requirement for anything left running.
+That hostname points at a process that runs shell commands as your user. Being
+an obscure subdomain is not a security control — **the agent token is the only
+thing protecting it**. Use the token `vibe-agent token` generates and nothing
+shorter. On a quick tunnel, stop `cloudflared` when you are not testing. On a
+named tunnel that stays up, put Cloudflare Access in front of the hostname and
+give the app a service token, so unauthenticated traffic never reaches Node at
+all.
 
 ### What the public tier changes
 

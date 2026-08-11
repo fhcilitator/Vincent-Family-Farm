@@ -13,10 +13,30 @@ export interface AgentConfig {
   name: string;
   trustedUrl: string | null;
   publicUrl: string | null;
+  /**
+   * Cloudflare Access service token id, when the tunnel sits behind Access.
+   *
+   * Access intercepts the request at Cloudflare's edge and answers an
+   * unauthenticated one with a redirect to a login page. A browser follows
+   * that and nothing looks wrong; this app cannot, so the WebSocket handshake
+   * simply fails. A service token is the non-interactive way in.
+   *
+   * Null on a tunnel without Access, which is the common case.
+   */
+  accessClientId: string | null;
+}
+
+/** Config plus the secrets that go with it. */
+export interface AgentCredentials {
+  config: AgentConfig;
+  token: string;
+  /** Cloudflare Access service token secret; null unless Access is in use. */
+  accessSecret: string | null;
 }
 
 const CONFIG_KEY = 'vff.agent.config';
 const TOKEN_KEY = 'vff.agent.token';
+const ACCESS_SECRET_KEY = 'vff.agent.accessSecret';
 
 /**
  * The token is the only thing standing between the internet and command
@@ -24,19 +44,31 @@ const TOKEN_KEY = 'vff.agent.token';
  * never in AsyncStorage. The endpoints are not secret and ride along with it
  * only for convenience.
  */
-export async function saveAgent(config: AgentConfig, token: string): Promise<void> {
-  await SecureStore.setItemAsync(CONFIG_KEY, JSON.stringify(config));
-  await SecureStore.setItemAsync(TOKEN_KEY, token);
+export async function saveAgent(creds: AgentCredentials): Promise<void> {
+  await SecureStore.setItemAsync(CONFIG_KEY, JSON.stringify(creds.config));
+  await SecureStore.setItemAsync(TOKEN_KEY, creds.token);
+  // Cleared rather than left behind when Access is turned off, so a stale
+  // secret cannot outlive the setup that needed it.
+  if (creds.accessSecret) await SecureStore.setItemAsync(ACCESS_SECRET_KEY, creds.accessSecret);
+  else await SecureStore.deleteItemAsync(ACCESS_SECRET_KEY);
 }
 
-export async function loadAgent(): Promise<{ config: AgentConfig; token: string } | null> {
-  const [raw, token] = await Promise.all([
+export async function loadAgent(): Promise<AgentCredentials | null> {
+  const [raw, token, accessSecret] = await Promise.all([
     SecureStore.getItemAsync(CONFIG_KEY),
     SecureStore.getItemAsync(TOKEN_KEY),
+    SecureStore.getItemAsync(ACCESS_SECRET_KEY),
   ]);
   if (!raw || !token) return null;
   try {
-    return { config: JSON.parse(raw) as AgentConfig, token };
+    const parsed = JSON.parse(raw) as Partial<AgentConfig>;
+    return {
+      // accessClientId is defaulted rather than assumed present: an install
+      // that paired before Access support existed has no such field.
+      config: { accessClientId: null, ...parsed } as AgentConfig,
+      token,
+      accessSecret: accessSecret ?? null,
+    };
   } catch {
     // Corrupt entry: treat as unpaired rather than crashing on launch.
     return null;
@@ -47,6 +79,7 @@ export async function forgetAgent(): Promise<void> {
   await Promise.all([
     SecureStore.deleteItemAsync(CONFIG_KEY),
     SecureStore.deleteItemAsync(TOKEN_KEY),
+    SecureStore.deleteItemAsync(ACCESS_SECRET_KEY),
   ]);
 }
 

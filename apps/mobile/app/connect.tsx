@@ -24,6 +24,9 @@ export default function ConnectScreen() {
   const [trustedUrl, setTrustedUrl] = useState('');
   const [publicUrl, setPublicUrl] = useState('');
   const [token, setToken] = useState('');
+  const [accessClientId, setAccessClientId] = useState('');
+  const [accessSecret, setAccessSecret] = useState('');
+  const [showAccess, setShowAccess] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
 
   useEffect(() => {
@@ -33,6 +36,10 @@ export default function ConnectScreen() {
       setTrustedUrl(saved.config.trustedUrl ?? '');
       setPublicUrl(saved.config.publicUrl ?? '');
       setToken(saved.token);
+      setAccessClientId(saved.config.accessClientId ?? '');
+      setAccessSecret(saved.accessSecret ?? '');
+      // Opened only if it is already in use, so the common setup never sees it.
+      setShowAccess(!!saved.config.accessClientId);
     });
   }, []);
 
@@ -41,6 +48,7 @@ export default function ConnectScreen() {
       name: name.trim() || 'dev box',
       trustedUrl: trustedUrl.trim() || null,
       publicUrl: publicUrl.trim() || null,
+      accessClientId: accessClientId.trim() || null,
     };
     if (!config.trustedUrl && !config.publicUrl) {
       setProblem('Enter at least one address.');
@@ -50,8 +58,18 @@ export default function ConnectScreen() {
       setProblem('The agent token is required — it is the only thing protecting the dev box.');
       return;
     }
-    await saveAgent(config, token.trim());
-    connect(config, token.trim());
+    // Half a service token is worse than none: Access rejects it in a way that
+    // reads as a connection failure rather than a missing credential.
+    if (!!config.accessClientId !== !!accessSecret.trim()) {
+      setProblem('A Cloudflare Access service token needs both the ID and the secret, or neither.');
+      return;
+    }
+    await saveAgent({
+      config,
+      token: token.trim(),
+      accessSecret: accessSecret.trim() || null,
+    });
+    connect({ config, token: token.trim(), accessSecret: accessSecret.trim() || null });
     router.back();
   };
 
@@ -61,6 +79,8 @@ export default function ConnectScreen() {
     setTrustedUrl('');
     setPublicUrl('');
     setToken('');
+    setAccessClientId('');
+    setAccessSecret('');
   };
 
   return (
@@ -99,6 +119,36 @@ export default function ConnectScreen() {
         Stored in the Android keystore. This is not an Anthropic credential — the app never has one.
         Claude is authenticated on the dev box.
       </Text>
+
+      <Pressable style={s.disclosure} onPress={() => setShowAccess((v) => !v)}>
+        <Text style={s.disclosureText}>
+          {showAccess ? '▾' : '▸'} Cloudflare Access (usually not needed)
+        </Text>
+      </Pressable>
+
+      {showAccess && (
+        <>
+          <Text style={s.help}>
+            Only if your tunnel sits behind Access. Check with{' '}
+            <Text style={s.code}>curl https://your-agent-url/health</Text> — if that returns JSON you
+            can leave these blank. If it returns a login page, create a service token in Cloudflare
+            Zero Trust and paste both halves here. The app cannot do the browser login.
+          </Text>
+          <Field
+            label="Access client ID"
+            value={accessClientId}
+            onChange={setAccessClientId}
+            placeholder="….access"
+          />
+          <Field
+            label="Access client secret"
+            value={accessSecret}
+            onChange={setAccessSecret}
+            placeholder="service token secret"
+            secure
+          />
+        </>
+      )}
 
       {problem && <Text style={s.problem}>{problem}</Text>}
 
@@ -159,6 +209,9 @@ const s = StyleSheet.create({
     fontSize: 15,
   },
   help: { color: C.dim, fontSize: 12, marginTop: 6, lineHeight: 17 },
+  code: { color: C.text, fontFamily: 'monospace', fontSize: 12 },
+  disclosure: { minHeight: TAP_MIN, justifyContent: 'center', marginTop: 16 },
+  disclosureText: { color: C.accent, fontSize: 14, fontWeight: '600' },
   problem: { color: C.danger, marginTop: 12 },
   primary: {
     marginTop: 20,
